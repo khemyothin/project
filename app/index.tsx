@@ -109,13 +109,6 @@ export default function Index() {
               </View>
               <Text style={styles.actionText}>รายงาน</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/maintenance')}>
-              <View style={[styles.actionIconBg, { backgroundColor: '#8B5CF6' }]}>
-                <Ionicons name="construct-outline" size={28} color="#FFF" />
-              </View>
-              <Text style={styles.actionText}>การซ่อมบำรุง</Text>
-            </TouchableOpacity>
           </View>
 
           {/* Recent Installations */}
