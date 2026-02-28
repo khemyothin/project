@@ -1,31 +1,74 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import MyMapView from '../components/MyMapView';
-import { supabase } from '../lib/supabase';
+import { ActivityIndicator, Alert, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import MyMapView from '../../components/MyMapView';
+import { supabase } from '../../lib/supabase';
 
-export default function AddInstallation() {
+export default function EditInstallation() {
+    const { id } = useLocalSearchParams();
     const router = useRouter();
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
+    const [status, setStatus] = useState('เสร็จสิ้น');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [initialLoading, setInitialLoading] = useState(true);
 
     // Location states
     const [location, setLocation] = useState<Location.LocationObject | null>(null);
     const [locationLoading, setLocationLoading] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
-
-    // Image states
-    const [imageUri, setImageUri] = useState<string | null>(null);
-    const [imageBase64, setImageBase64] = useState<string | null>(null);
+    const [manualLocationText, setManualLocationText] = useState('');
 
     useEffect(() => {
-        // Attempt to get location when screen loads
-        getLocation();
-    }, []);
+        const fetchDetails = async () => {
+            try {
+                setInitialLoading(true);
+                const { data, error } = await supabase
+                    .from('installations')
+                    .select('*')
+                    .eq('id', id)
+                    .single();
+
+                if (error) throw error;
+
+                if (data) {
+                    setTitle(data.title || '');
+                    setDescription(data.description || '');
+                    setStatus(data.status || 'เสร็จสิ้น');
+
+                    if (data.location) {
+                        if (typeof data.location === 'object' && data.location.latitude) {
+                            setLocation({
+                                coords: {
+                                    latitude: data.location.latitude,
+                                    longitude: data.location.longitude,
+                                    altitude: null,
+                                    accuracy: null,
+                                    altitudeAccuracy: null,
+                                    heading: null,
+                                    speed: null,
+                                },
+                                timestamp: Date.now()
+                            });
+                        } else if (typeof data.location === 'string') {
+                            setManualLocationText(data.location);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching details details:', error);
+                Alert.alert("ข้อผิดพลาด", "ไม่สามารถโหลดข้อมูลเดิมได้");
+            } finally {
+                setInitialLoading(false);
+            }
+        };
+
+        if (id) {
+            fetchDetails();
+        }
+    }, [id]);
 
     const getLocation = async () => {
         setLocationLoading(true);
@@ -47,75 +90,7 @@ export default function AddInstallation() {
         }
     };
 
-    const requestImageOptions = () => {
-        Alert.alert(
-            "เพิ่มรูปภาพ",
-            "เลือกวิธีการเพิ่มรูปภาพ",
-            [
-                { text: "ยกเลิก", style: "cancel" },
-                { text: "ถ่ายรูปกล้อง", onPress: takePhoto },
-                { text: "เลือกจากอัลบั้ม", onPress: pickImage }
-            ]
-        );
-    };
-
-    const pickImage = async () => {
-        try {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('ข้อผิดพลาด', 'แอปต้องการสิทธิ์เข้าถึงอัลบั้มรูปภาพ');
-                return;
-            }
-
-            let result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: true,
-                aspect: [4, 3],
-                quality: 0.5,
-                base64: true,
-            });
-
-            if (!result.canceled && result.assets && result.assets.length > 0) {
-                setImageUri(result.assets[0].uri);
-                setImageBase64(result.assets[0].base64 || null);
-            }
-        } catch (error) {
-            console.error("Error picking image:", error);
-            Alert.alert("ข้อผิดพลาด", "ไม่สามารถเลือกรูปภาพได้");
-        }
-    };
-
-    const takePhoto = async () => {
-        try {
-            const { status } = await ImagePicker.requestCameraPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('ข้อผิดพลาด', 'แอปต้องการสิทธิ์เข้าถึงกล้องถ่ายรูป');
-                return;
-            }
-
-            let result = await ImagePicker.launchCameraAsync({
-                allowsEditing: true,
-                aspect: [4, 3],
-                quality: 0.5,
-                base64: true,
-            });
-
-            if (!result.canceled && result.assets && result.assets.length > 0) {
-                setImageUri(result.assets[0].uri);
-                setImageBase64(result.assets[0].base64 || null);
-            }
-        } catch (error) {
-            console.error("Error taking photo:", error);
-            Alert.alert("ข้อผิดพลาด", "ไม่สามารถเปิดกล้องได้");
-        }
-    };
-
-    const removeImage = () => {
-        setImageUri(null);
-        setImageBase64(null);
-    };
-
-    const saveInstallation = async () => {
+    const updateInstallation = async () => {
         if (!title) {
             Alert.alert("ข้อผิดพลาด", "กรุณาระบุชื่อสถานที่ติดตั้ง");
             return;
@@ -123,17 +98,23 @@ export default function AddInstallation() {
 
         try {
             setIsSubmitting(true);
+
+            let finalLocation = null;
+            if (location) {
+                finalLocation = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+            } else if (manualLocationText) {
+                finalLocation = manualLocationText;
+            }
+
             const { data, error } = await supabase
                 .from('installations')
-                .insert([
-                    {
-                        title,
-                        description,
-                        location: location ? { latitude: location.coords.latitude, longitude: location.coords.longitude } : null,
-                        image_base64: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : null,
-                        status: 'เสร็จสิ้น'
-                    }
-                ]);
+                .update({
+                    title,
+                    description,
+                    status,
+                    location: finalLocation
+                })
+                .eq('id', id);
 
             if (error) {
                 console.error('Supabase Error:', error);
@@ -141,16 +122,30 @@ export default function AddInstallation() {
                 return;
             }
 
-            Alert.alert("สำเร็จ", "บันทึกข้อมูลสำเร็จ", [
+            Alert.alert("สำเร็จ", "อัปเดตข้อมูลสำเร็จ", [
                 { text: "ตกลง", onPress: () => router.back() }
             ]);
+            // refresh data on previous page if possible? we rely on the list reloading instead.
+
         } catch (error: any) {
-            console.error('Error saving data:', error);
+            console.error('Error updating data:', error);
             Alert.alert("ข้อผิดพลาด", error?.message || "ระบบขัดข้อง กรุณาลองใหม่");
         } finally {
             setIsSubmitting(false);
         }
     };
+
+    const toggleStatus = () => {
+        setStatus(prev => prev === 'เสร็จสิ้น' ? 'รอดำเนินการ' : 'เสร็จสิ้น');
+    };
+
+    if (initialLoading) {
+        return (
+            <SafeAreaView style={styles.safeArea}>
+                <ActivityIndicator size="large" color="#3B82F6" style={{ flex: 1, alignSelf: 'center' }} />
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -160,7 +155,7 @@ export default function AddInstallation() {
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                         <Ionicons name="arrow-back" size={24} color="#0F172A" />
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>เพิ่มจุดติดตั้งใหม่</Text>
+                    <Text style={styles.headerTitle}>แก้ไขจุดติดตั้ง</Text>
                     <View style={{ width: 40 }} />
                 </View>
 
@@ -174,6 +169,24 @@ export default function AddInstallation() {
                             value={title}
                             onChangeText={setTitle}
                         />
+                    </View>
+
+                    <View style={styles.formGroup}>
+                        <Text style={styles.label}>สถานะการทำงาน</Text>
+                        <TouchableOpacity
+                            style={[
+                                styles.statusToggle,
+                                { backgroundColor: status === 'เสร็จสิ้น' ? '#D1FAE5' : '#FEF3C7', borderColor: status === 'เสร็จสิ้น' ? '#10B981' : '#F59E0B' }
+                            ]}
+                            onPress={toggleStatus}
+                        >
+                            <Text style={[
+                                styles.statusToggleText,
+                                { color: status === 'เสร็จสิ้น' ? '#059669' : '#D97706' }
+                            ]}>
+                                {status} (แตะเพื่อเปลี่ยน)
+                            </Text>
+                        </TouchableOpacity>
                     </View>
 
                     <View style={styles.formGroup}>
@@ -197,7 +210,7 @@ export default function AddInstallation() {
                                 {locationLoading ? 'กำลังดึงตำแหน่ง...' :
                                     errorMsg ? errorMsg :
                                         location ? `${location.coords.latitude.toFixed(4)}° N, ${location.coords.longitude.toFixed(4)}° E` :
-                                            'กดปุ่มรีเฟรชเพื่อดึงตำแหน่ง GPS'}
+                                            'กดปุ่มรีเฟรชเพื่อดึงตำแหน่ง GPS ปัจจุบัน'}
                             </Text>
                             <Ionicons name="refresh" size={20} color="#64748B" />
                         </TouchableOpacity>
@@ -208,33 +221,15 @@ export default function AddInstallation() {
                         </View>
                     </View>
 
-                    <View style={styles.formGroup}>
-                        <Text style={styles.label}>อัพโหลดรูปภาพ</Text>
-
-                        {imageUri ? (
-                            <View style={styles.imagePreviewContainer}>
-                                <Image source={{ uri: imageUri }} style={styles.imagePreview} />
-                                <TouchableOpacity style={styles.removeImageButton} onPress={removeImage}>
-                                    <Ionicons name="close-circle" size={28} color="#EF4444" />
-                                </TouchableOpacity>
-                            </View>
-                        ) : (
-                            <TouchableOpacity style={styles.uploadBox} onPress={requestImageOptions}>
-                                <Ionicons name="camera-outline" size={40} color="#94A3B8" />
-                                <Text style={styles.uploadText}>แตะเพื่อถ่ายรูป หรือ เลือกจากอัลบั้ม</Text>
-                            </TouchableOpacity>
-                        )}
-                    </View>
-
                     <TouchableOpacity
                         style={[styles.submitButton, isSubmitting && { opacity: 0.7 }]}
-                        onPress={saveInstallation}
+                        onPress={updateInstallation}
                         disabled={isSubmitting}
                     >
                         {isSubmitting ? (
                             <ActivityIndicator color="#FFF" />
                         ) : (
-                            <Text style={styles.submitButtonText}>บันทึกข้อมูล</Text>
+                            <Text style={styles.submitButtonText}>บันทึกการแก้ไข</Text>
                         )}
                     </TouchableOpacity>
 
@@ -299,6 +294,17 @@ const styles = StyleSheet.create({
         minHeight: 100,
         paddingTop: 14,
     },
+    statusToggle: {
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        borderWidth: 1,
+        alignItems: 'center',
+    },
+    statusToggleText: {
+        fontWeight: 'bold',
+        fontSize: 15,
+    },
     gpsButton: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -315,50 +321,14 @@ const styles = StyleSheet.create({
         color: '#1E40AF',
         fontWeight: '500',
     },
-    uploadBox: {
-        height: 140,
-        backgroundColor: '#F1F5F9',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderStyle: 'dashed',
-        borderColor: '#CBD5E1',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    uploadText: {
-        marginTop: 12,
-        color: '#64748B',
-        fontSize: 14,
-    },
-    imagePreviewContainer: {
-        position: 'relative',
-        height: 200,
-        borderRadius: 12,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    imagePreview: {
-        width: '100%',
-        height: '100%',
-        resizeMode: 'cover',
-    },
-    removeImageButton: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 20,
-        padding: 2,
-    },
     submitButton: {
-        backgroundColor: '#3B82F6',
+        backgroundColor: '#10B981',
         paddingVertical: 16,
         borderRadius: 14,
         alignItems: 'center',
         marginTop: 10,
         marginBottom: 40,
-        shadowColor: '#3B82F6',
+        shadowColor: '#10B981',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.2,
         shadowRadius: 8,
